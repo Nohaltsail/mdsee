@@ -1,0 +1,539 @@
+/**
+ * Markdown Desktop Editor (mdsee) - Main Frontend Logic
+ * 功能：打开文件夹、Mermaid渲染、暗色主题、PDF导出
+ */
+import Vditor from 'vditor'
+import 'vditor/dist/index.css'
+import { DocManager } from './docManager.js'
+import { defaultContent } from './defaultContent.js'
+
+// ============ 全局状态 ============
+let vditor = null
+let docManager = null
+let sidebarCollapsed = false
+let saveTimer = null
+const SAVE_DEBOUNCE_MS = 800
+
+// 文件夹模式状态
+let folderMode = false
+let folderFiles = [] // { name, content, path }[]
+let activeFilePath = null
+
+// 主题状态
+let isDark = localStorage.getItem('mde_theme') === 'dark'
+
+// ============ 初始化 ============
+document.addEventListener('DOMContentLoaded', () => {
+  docManager = new DocManager()
+  if (isDark) document.documentElement.setAttribute('data-theme', 'dark')
+  initSidebar()
+  initHeader()
+  initVditor()
+  initKeyboardShortcuts()
+  initElectronMenuListeners()
+})
+
+// ============ Vditor 编辑器初始化 ============
+function initVditor() {
+  const activeDoc = docManager.getActiveDoc()
+  const theme = isDark ? 'dark' : 'classic'
+  const options = {
+    width: '100%',
+    height: '100%',
+    tab: '\t',
+    typewriterMode: true,
+    mode: 'ir',
+    theme,
+    cache: { enable: false },
+    placeholder: '开始书写 Markdown...',
+    preview: {
+      delay: 150,
+      show: true,
+      theme: { current: theme },
+      hljs: { style: isDark ? 'github-dark' : 'github' },
+      markdown: {
+        mermaid: { enable: true },
+      },
+    },
+    outline: { enable: true, position: 'right' },
+    toolbar: [
+      'headings', 'bold', 'italic', 'strike', '|',
+      'list', 'ordered-list', 'check', '|',
+      'quote', 'code', 'inline-code', '|',
+      'link', 'table', '|',
+      'undo', 'redo', '|',
+      'edit-mode', 'both', 'preview', '|',
+      'outline', 'fullscreen',
+    ],
+    input: (value) => { debouncedSave(value) },
+    after: () => {
+      if (activeDoc) {
+        vditor.setValue(activeDoc.content || getDefaultContent())
+      } else {
+        vditor.setValue(getDefaultContent())
+      }
+      vditor.focus()
+    },
+  }
+  vditor = new Vditor('vditor', options)
+}
+
+// ============ 防抖保存 ============
+function debouncedSave(value) {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    if (folderMode && activeFilePath && vditor) {
+      // 文件夹模式下保存到内存（实际文件保存用 Ctrl+S）
+      const f = folderFiles.find(x => x.path === activeFilePath)
+      if (f) f.content = value
+    } else {
+      const activeDoc = docManager.getActiveDoc()
+      if (activeDoc && vditor) docManager.saveContent(activeDoc.id, value)
+    }
+    saveTimer = null
+  }, SAVE_DEBOUNCE_MS)
+}
+
+function saveCurrentDoc() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+  if (folderMode && activeFilePath && vditor) {
+    const f = folderFiles.find(x => x.path === activeFilePath)
+    if (f) f.content = vditor.getValue()
+  } else {
+    const activeDoc = docManager.getActiveDoc()
+    if (activeDoc && vditor && typeof vditor.getValue === 'function') {
+      docManager.saveContent(activeDoc.id, vditor.getValue())
+    }
+  }
+}
+
+// ============ 侧边栏 ============
+function initSidebar() {
+  updateDocList()
+  document.getElementById('toggleSidebarBtn').addEventListener('click', toggleSidebar)
+  document.getElementById('collapseSidebarBtn').addEventListener('click', toggleSidebar)
+  document.getElementById('btnNewDoc').addEventListener('click', () => {
+    if (folderMode) closeFolder()
+    const doc = docManager.createDoc('未命名文档')
+    docManager.setActive(doc.id)
+    vditor.setValue('')
+    vditor.focus()
+    updateDocList()
+    showToast('已新建文档', 'success')
+  })
+  document.getElementById('btnCloseFolder').addEventListener('click', () => {
+    closeFolder()
+    updateDocList()
+  })
+}
+
+function toggleSidebar() {
+  sidebarCollapsed = !sidebarCollapsed
+  document.getElementById('sidebar').classList.toggle('collapsed', sidebarCollapsed)
+}
+
+function closeFolder() {
+  folderMode = false
+  folderFiles = []
+  activeFilePath = null
+  document.getElementById('sidebarFolder').style.display = 'none'
+}
+
+// ============ 文档列表渲染 ============
+function updateDocList() {
+  const listEl = document.getElementById('docList')
+  listEl.innerHTML = ''
+
+  if (folderMode) {
+    // 文件夹模式：显示文件夹内的文件
+    folderFiles.forEach(file => {
+      const item = document.createElement('div')
+      item.className = 'sidebar-item' + (file.path === activeFilePath ? ' active' : '')
+
+      const icon = document.createElement('span')
+      icon.className = 'sidebar-item-icon'
+      icon.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`
+
+      const title = document.createElement('span')
+      title.className = 'sidebar-item-title'
+      title.textContent = file.name || '未命名'
+      title.title = file.path
+
+      item.appendChild(icon)
+      item.appendChild(title)
+      item.addEventListener('click', () => selectFolderFile(file.path))
+      listEl.appendChild(item)
+    })
+  } else {
+    // 普通模式：显示内置文档
+    const docs = docManager.getAllDocs()
+    const activeId = docManager.getActiveId()
+    docs.forEach(doc => {
+      const item = document.createElement('div')
+      item.className = 'sidebar-item' + (doc.id === activeId ? ' active' : '')
+
+      const title = document.createElement('span')
+      title.className = 'sidebar-item-title'
+      title.textContent = doc.title || '未命名文档'
+      title.title = doc.title || '未命名文档'
+
+      const actions = document.createElement('span')
+      actions.className = 'sidebar-item-actions'
+
+      const renameBtn = document.createElement('span')
+      renameBtn.className = 'sidebar-item-action'
+      renameBtn.title = '重命名'
+      renameBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5z"/></svg>`
+      renameBtn.addEventListener('click', (e) => { e.stopPropagation(); startRename(doc.id, item, title) })
+
+      const deleteBtn = document.createElement('span')
+      deleteBtn.className = 'sidebar-item-action danger'
+      deleteBtn.title = '删除'
+      deleteBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>`
+      deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteDoc(doc.id) })
+
+      actions.appendChild(renameBtn)
+      actions.appendChild(deleteBtn)
+      item.appendChild(title)
+      item.appendChild(actions)
+      item.addEventListener('click', () => { if (doc.id !== activeId) selectDoc(doc.id) })
+      listEl.appendChild(item)
+    })
+  }
+}
+
+function selectDoc(id) {
+  saveCurrentDoc()
+  docManager.setActive(id)
+  const doc = docManager.getDoc(id)
+  vditor.setValue(doc ? doc.content || '' : '')
+  vditor.focus()
+  updateDocList()
+}
+
+function selectFolderFile(filePath) {
+  saveCurrentDoc()
+  activeFilePath = filePath
+  const file = folderFiles.find(x => x.path === filePath)
+  if (file) {
+    vditor.setValue(file.content || '')
+    vditor.focus()
+  }
+  updateDocList()
+}
+
+function startRename(docId, itemEl, titleEl) {
+  const doc = docManager.getDoc(docId)
+  if (!doc) return
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.className = 'sidebar-item-input'
+  input.value = doc.title || '未命名文档'
+  titleEl.replaceWith(input)
+  input.focus()
+  input.select()
+  const submit = () => { docManager.renameDoc(docId, input.value.trim() || '未命名文档'); updateDocList() }
+  input.addEventListener('blur', submit)
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit() }; if (e.key === 'Escape') updateDocList() })
+  input.addEventListener('click', (e) => e.stopPropagation())
+}
+
+function deleteDoc(docId) {
+  showConfirm('删除文档', '确定要删除该文档吗？删除后无法恢复。', () => {
+    docManager.deleteDoc(docId)
+    const activeId = docManager.getActiveId()
+    if (activeId) { const d = docManager.getDoc(activeId); vditor.setValue(d ? d.content || '' : '') }
+    else vditor.setValue('')
+    updateDocList()
+    showToast('文档已删除')
+  }, true)
+}
+
+// ============ 头部按钮事件 ============
+function initHeader() {
+  document.getElementById('btnNewFile').addEventListener('click', handleNewFile)
+  document.getElementById('btnOpenFile').addEventListener('click', handleOpenFile)
+  document.getElementById('btnOpenFolder').addEventListener('click', handleOpenFolder)
+  document.getElementById('btnSaveFile').addEventListener('click', handleSaveFile)
+  document.getElementById('btnExportPdf').addEventListener('click', handleExportPdf)
+  document.getElementById('btnExportHtml').addEventListener('click', handleExportHtml)
+  document.getElementById('btnTheme').addEventListener('click', toggleTheme)
+  document.getElementById('btnFullscreen').addEventListener('click', toggleFullscreen)
+  updateThemeIcon()
+}
+
+async function handleNewFile() {
+  if (folderMode) closeFolder()
+  if (window.electronAPI) {
+    const result = await window.electronAPI.newFile()
+    if (result) { docManager.createDoc(result.name || '未命名文档'); updateDocList() }
+  } else {
+    docManager.createDoc('未命名文档')
+  }
+  vditor.setValue('')
+  vditor.focus()
+  updateDocList()
+}
+
+async function handleOpenFile() {
+  if (folderMode) closeFolder()
+  if (window.electronAPI) {
+    const result = await window.electronAPI.openFile()
+    if (result) {
+      const doc = docManager.createDoc(result.name)
+      docManager.saveContent(doc.id, result.content)
+      docManager.setActive(doc.id)
+      vditor.setValue(result.content)
+      vditor.focus()
+      updateDocList()
+      showToast(`已打开: ${result.name}`, 'success')
+    }
+  } else {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.md,.markdown,.txt'
+    input.onchange = (e) => {
+      const file = e.target.files[0]
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = (ev) => {
+        const content = ev.target.result
+        const title = file.name.replace(/\.(md|markdown|txt)$/i, '') || '导入的文档'
+        const doc = docManager.createDoc(title)
+        docManager.saveContent(doc.id, content)
+        docManager.setActive(doc.id)
+        vditor.setValue(content)
+        vditor.focus()
+        updateDocList()
+        showToast(`已打开: ${title}`, 'success')
+      }
+      reader.readAsText(file)
+    }
+    input.click()
+  }
+}
+
+async function handleOpenFolder() {
+  if (window.electronAPI) {
+    const result = await window.electronAPI.openFolder()
+    if (result && result.files.length > 0) {
+      folderMode = true
+      folderFiles = result.files
+      activeFilePath = result.files[0].path
+
+      // 显示文件夹信息
+      const folderEl = document.getElementById('sidebarFolder')
+      const folderNameEl = document.getElementById('folderName')
+      folderEl.style.display = 'flex'
+      folderNameEl.textContent = result.folderName
+      folderNameEl.title = result.folderPath
+
+      // 加载第一个文件
+      vditor.setValue(result.files[0].content || '')
+      vditor.focus()
+      updateDocList()
+      showToast(`已打开文件夹: ${result.folderName}（${result.files.length} 个文件）`, 'success')
+    } else if (result && result.files.length === 0) {
+      showToast('文件夹中没有 Markdown 文件')
+    }
+  } else {
+    showToast('打开文件夹仅在桌面版可用')
+  }
+}
+
+async function handleSaveFile() {
+  saveCurrentDoc()
+
+  if (folderMode && activeFilePath) {
+    // 文件夹模式：通过 IPC 保存回原文件
+    const file = folderFiles.find(x => x.path === activeFilePath)
+    if (window.electronAPI && file) {
+      await window.electronAPI.saveFile({ name: file.name, content: file.content, path: activeFilePath })
+      showToast('保存成功', 'success')
+    }
+    return
+  }
+
+  const activeDoc = docManager.getActiveDoc()
+  if (!activeDoc) return
+
+  if (window.electronAPI) {
+    const result = await window.electronAPI.saveFile({ name: activeDoc.title, content: activeDoc.content })
+    if (result) showToast('保存成功', 'success')
+  } else {
+    const blob = new Blob([activeDoc.content || ''], { type: 'text/markdown' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = (activeDoc.title || '未命名文档') + '.md'
+    a.click()
+    URL.revokeObjectURL(url)
+    showToast('已下载文件', 'success')
+  }
+}
+
+// 从 Vditor 预览面板获取已渲染 HTML（含 Mermaid SVG + 公式样式）
+function getPreviewHtml() {
+  const internal = vditor.vditor
+  const previewEl = internal.preview.previewElement
+
+  // 预览面板在 IR 模式下默认隐藏（display:none），render() 会提前返回
+  // 需要临时显示它，强制触发渲染，等待完成后再提取
+  const wasHidden = internal.preview.element.style.display === 'none'
+  if (wasHidden) {
+    internal.preview.element.style.display = 'block'
+    internal.preview.render(internal)
+  }
+
+  // 等待异步渲染完成（preview.delay=150ms + Mermaid/公式渲染时间）
+  return new Promise((resolve) => {
+    const checkInterval = setInterval(() => {
+      if (previewEl.innerHTML && previewEl.innerHTML.trim().length > 10) {
+        clearInterval(checkInterval)
+        clearTimeout(fallbackTimer)
+        const html = previewEl.innerHTML
+        if (wasHidden) internal.preview.element.style.display = 'none'
+        resolve(html)
+      }
+    }, 200)
+
+    // 超时兜底
+    const fallbackTimer = setTimeout(() => {
+      clearInterval(checkInterval)
+      const html = previewEl.innerHTML || vditor.getHTML()
+      if (wasHidden) internal.preview.element.style.display = 'none'
+      resolve(html)
+    }, 5000)
+  })
+}
+
+async function handleExportPdf() {
+  if (!vditor) return
+  const title = folderMode
+    ? (folderFiles.find(x => x.path === activeFilePath)?.name || 'export')
+    : (docManager.getActiveDoc()?.title || 'export')
+
+  showToast('正在准备导出...')
+  const html = await getPreviewHtml()
+
+  if (window.electronAPI) {
+    showToast('正在导出 PDF...')
+    const result = await window.electronAPI.exportPdf({ title, html })
+    if (result) showToast('PDF 导出成功', 'success')
+    else showToast('PDF 导出失败', 'error')
+  } else {
+    // 浏览器 fallback：使用 window.print
+    const vditorCss = document.querySelector('link[href*="vditor"]')?.href || ''
+    const printWin = window.open('', '_blank')
+    printWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
+      ${vditorCss ? `<link rel="stylesheet" href="${vditorCss}">` : ''}
+      <style>body{font-family:-apple-system,sans-serif;max-width:800px;margin:0 auto;padding:40px 20px;line-height:1.6}
+      .vditor-reset{font-size:14px}
+      h1,h2{border-bottom:1px solid #eaecef;padding-bottom:.3em}
+      code{background:#f6f8fa;padding:.2em .4em;border-radius:3px}
+      pre{background:#f6f8fa;padding:16px;border-radius:6px;overflow-x:auto}pre code{background:none;padding:0}
+      blockquote{border-left:.25em solid #dfe2e5;padding:0 1em;color:#6a737d}
+      table{border-collapse:collapse;width:100%}th,td{border:1px solid #dfe2e5;padding:6px 13px}th{background:#f6f8fa}
+      svg{max-width:100%;height:auto}</style>
+      </head><body><div class="vditor-reset">${html}</div></body></html>`)
+    printWin.document.close()
+    printWin.focus()
+    setTimeout(() => { printWin.print(); printWin.close() }, 500)
+    showToast('请在弹出窗口中保存 PDF', 'success')
+  }
+}
+
+async function handleExportHtml() {
+  const html = vditor.getHTML()
+  const title = folderMode
+    ? (folderFiles.find(x => x.path === activeFilePath)?.name || 'export')
+    : (docManager.getActiveDoc()?.title || 'export')
+  const blob = new Blob([`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title></head><body>${html}</body></html>`], { type: 'text/html' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = title + '.html'
+  a.click()
+  URL.revokeObjectURL(url)
+  showToast('HTML 导出成功', 'success')
+}
+
+// ============ 主题切换 ============
+function toggleTheme() {
+  isDark = !isDark
+  localStorage.setItem('mde_theme', isDark ? 'dark' : 'light')
+  document.documentElement.setAttribute('data-theme', isDark ? 'dark' : '')
+  if (!isDark) document.documentElement.removeAttribute('data-theme')
+  else document.documentElement.setAttribute('data-theme', 'dark')
+
+  // 切换 Vditor 主题
+  if (vditor) {
+    vditor.setTheme(isDark ? 'dark' : 'classic', isDark ? 'dark' : 'light', isDark ? 'github-dark' : 'github')
+  }
+  updateThemeIcon()
+}
+
+function updateThemeIcon() {
+  const icon = document.getElementById('themeIcon')
+  if (isDark) {
+    // 太阳图标（表示当前暗色，点击切回亮色）
+    icon.innerHTML = `<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>`
+  } else {
+    // 月亮图标（表示当前亮色，点击切到暗色）
+    icon.innerHTML = `<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>`
+  }
+}
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen()
+  else document.exitFullscreen()
+}
+
+// ============ 键盘快捷键 ============
+function initKeyboardShortcuts() {
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 's') { e.preventDefault(); handleSaveFile() }
+    if (e.ctrlKey && !e.shiftKey && e.key === 'o') { e.preventDefault(); handleOpenFile() }
+    if (e.ctrlKey && e.shiftKey && e.key === 'O') { e.preventDefault(); handleOpenFolder() }
+    if (e.ctrlKey && e.key === 'n') { e.preventDefault(); handleNewFile() }
+    if (e.key === 'F11') { e.preventDefault(); toggleFullscreen() }
+  })
+}
+
+// ============ Electron 菜单事件 ============
+function initElectronMenuListeners() {
+  if (!window.electronAPI) return
+  window.electronAPI.onMenuNewFile(() => handleNewFile())
+  window.electronAPI.onMenuOpenFile(() => handleOpenFile())
+  window.electronAPI.onMenuOpenFolder(() => handleOpenFolder())
+  window.electronAPI.onMenuSaveFile(() => handleSaveFile())
+  window.electronAPI.onMenuSaveAs(() => handleSaveFile())
+}
+
+// ============ Toast 提示 ============
+function showToast(message, type = '') {
+  let toast = document.querySelector('.toast')
+  if (!toast) { toast = document.createElement('div'); toast.className = 'toast'; document.body.appendChild(toast) }
+  toast.textContent = message
+  toast.className = 'toast ' + type
+  requestAnimationFrame(() => toast.classList.add('show'))
+  setTimeout(() => toast.classList.remove('show'), 2500)
+}
+
+// ============ 确认弹窗 ============
+function showConfirm(title, message, onConfirm, isDanger = false) {
+  const overlay = document.createElement('div')
+  overlay.className = 'dialog-overlay'
+  overlay.innerHTML = `<div class="dialog-box"><div class="dialog-title">${title}</div><div class="dialog-message">${message}</div><div class="dialog-actions"><button class="dialog-btn cancel" id="dialogCancel">取消</button><button class="dialog-btn ${isDanger ? 'danger' : 'confirm'}" id="dialogConfirm">确定</button></div></div>`
+  document.body.appendChild(overlay)
+  requestAnimationFrame(() => overlay.classList.add('show'))
+  const close = () => { overlay.classList.remove('show'); setTimeout(() => overlay.remove(), 200) }
+  overlay.querySelector('#dialogCancel').addEventListener('click', close)
+  overlay.querySelector('#dialogConfirm').addEventListener('click', () => { close(); onConfirm() })
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
+}
+
+// ============ 默认内容 ============
+function getDefaultContent() {
+  return defaultContent
+}

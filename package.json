@@ -1,0 +1,69 @@
+{
+  "name": "mdsee",
+  "version": "1.0.0",
+  "description": "桌面版 Markdown 编辑器，基于 Vditor，支持打包为 Windows 安装程序",
+  "main": "electron/main.js",
+  "author": "Nohaltsail",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
+    "electron:build": "vite build && electron-builder",
+    "electron:build:win": "vite build && electron-builder --win",
+    "electron:build:linux": "vite build && electron-builder --linux",
+    "electron:preview": "vite build && electron ."
+  },
+  "dependencies": {
+    "vditor": "^3.11.2"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3",
+    "concurrently": "^8.2.2",
+    "wait-on": "^7.2.0",
+    "cross-env": "^7.0.3"
+  },
+  "build": {
+    "appId": "com.nohaltsail.mdsee",
+    "productName": "mdsee",
+    "copyright": "Copyright © 2026 Nohaltsail",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64"]
+        }
+      ],
+      "category": "Office"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "mdsee"
+    }
+  }
+}
