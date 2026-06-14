@@ -15,9 +15,25 @@ echo ""
 # 切换到项目根目录（脚本所在目录）
 cd "$(dirname "$0")"
 
-# 检查 Node.js
+# 检查 Node.js（兼容 sudo 重置 PATH 的情况）
+if ! command -v node &> /dev/null; then
+    # 尝试常见安装路径
+    for p in /usr/local/lib/nodejs/*/bin /usr/local/bin /opt/nodejs/bin "$HOME/.nvm/versions/node/*/bin"; do
+        if [ -x "$p/node" ]; then
+            export PATH="$p:$PATH"
+            break
+        fi
+    done
+    # 尝试 NODEJS_HOME 环境变量
+    if ! command -v node &> /dev/null && [ -n "$NODEJS_HOME" ]; then
+        export PATH="$NODEJS_HOME/bin:$PATH"
+    fi
+fi
+
 if ! command -v node &> /dev/null; then
     echo "[错误] 未检测到 Node.js，请先安装: https://nodejs.org/"
+    echo "[提示] 请勿使用 sudo 运行此脚本（sudo 会重置 PATH 导致找不到 node）"
+    echo "[提示] 正确用法: bash build.sh"
     exit 1
 fi
 
