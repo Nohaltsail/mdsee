@@ -4,6 +4,7 @@
  */
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron')
 const path = require('path')
+const { pathToFileURL } = require('url')
 const fs = require('fs')
 const os = require('os')
 
@@ -181,7 +182,7 @@ ipcMain.handle('new-file', async () => {
   return { name: '未命名文档' }
 })
 
-// 导出 PDF — 从 Vditor 预览面板获取已渲染 HTML，在 PDF 窗口中二次渲染公式和代码高亮
+// 导出 PDF — 使用 Vditor 本地捆绑的 KaTeX/hljs，零 CDN 依赖
 ipcMain.handle('export-pdf', async (event, { title, html }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     title: '导出 PDF',
@@ -195,15 +196,34 @@ ipcMain.handle('export-pdf', async (event, { title, html }) => {
   try {
     tmpFile = path.join(os.tmpdir(), `mdsee_pdf_${Date.now()}.html`)
 
-    // 读取 Vditor CSS（含 .vditor-reset、代码块、Mermaid 等基础样式）
-    const vditorCssPath = path.join(__dirname, '..', 'node_modules', 'vditor', 'dist', 'index.css')
+    // 从 Vditor 本地 dist 读取资源（无需 CDN）
+    const vditorDist = path.join(__dirname, '..', 'node_modules', 'vditor', 'dist')
+
+    // Vditor 主 CSS
     let vditorCss = ''
-    try { vditorCss = fs.readFileSync(vditorCssPath, 'utf-8') } catch {}
+    try { vditorCss = fs.readFileSync(path.join(vditorDist, 'index.css'), 'utf-8') } catch {}
+
+    // KaTeX CSS（修复字体路径为绝对路径）
+    let katexCss = ''
+    try {
+      katexCss = fs.readFileSync(path.join(vditorDist, 'js', 'katex', 'katex.min.css'), 'utf-8')
+      const fontDir = pathToFileURL(path.join(vditorDist, 'js', 'katex', 'fonts')).href
+      katexCss = katexCss.replace(/url\(fonts\//g, `url(${fontDir}/`)
+    } catch {}
+
+    // KaTeX JS
+    let katexJs = ''
+    try { katexJs = fs.readFileSync(path.join(vditorDist, 'js', 'katex', 'katex.min.js'), 'utf-8') } catch {}
+
+    // highlight.js
+    let hljsJs = ''
+    try { hljsJs = fs.readFileSync(path.join(vditorDist, 'js', 'highlight.js', 'highlight.min.js'), 'utf-8') } catch {}
 
     const fullHtml = `<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
   ${vditorCss}
+  ${katexCss}
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
          max-width: 800px; margin: 0 auto; padding: 40px 20px; line-height: 1.6; color: #24292e; }
   .vditor-reset { font-size: 14px; }
@@ -235,8 +255,56 @@ ipcMain.handle('export-pdf', async (event, { title, html }) => {
   .hljs-link{color:#032f62}
   .hljs-emphasis{font-style:italic}
   .hljs-strong{font-weight:bold}
-</style></head>
-<body><div class="vditor-reset">${html}</div></body></html>`
+</style>
+<script>${katexJs}<\/script>
+<script>${hljsJs}<\/script>
+</head>
+<body><div class="vditor-reset">${html}</div>
+<script>
+// KaTeX 公式渲染（替代 auto-render）
+if (typeof katex !== 'undefined') {
+  var body = document.body;
+  var walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, null, false);
+  var nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  // 先处理 $$...$$ 块级公式，再处理 $...$ 行内公式
+  ['$$', '$'].forEach(function(delim) {
+    var isBlock = delim === '$$';
+    nodes.forEach(function(node) {
+      if (node.nodeType !== 3) return;
+      var text = node.textContent;
+      var idx = text.indexOf(delim);
+      if (idx < 0) return;
+      var endIdx = text.indexOf(delim, idx + delim.length);
+      if (endIdx < 0) return;
+      var before = text.slice(0, idx);
+      var math = text.slice(idx + delim.length, endIdx);
+      var after = text.slice(endIdx + delim.length);
+      try {
+        var html = katex.renderToString(math, { displayMode: isBlock, throwOnError: false });
+        var span = document.createElement('span');
+        span.innerHTML = html;
+        var parent = node.parentNode;
+        if (before) parent.insertBefore(document.createTextNode(before), node);
+        parent.insertBefore(span, node);
+        if (after) {
+          var afterNode = document.createTextNode(after);
+          parent.insertBefore(afterNode, node);
+          nodes.push(afterNode);
+        }
+        parent.removeChild(node);
+      } catch(e) {}
+    });
+  });
+}
+// highlight.js 代码高亮
+if (typeof hljs !== 'undefined') {
+  document.querySelectorAll('pre code[class]').forEach(function(block) {
+    try { hljs.highlightElement(block); } catch(e) {}
+  });
+}
+<\/script>
+</body></html>`
 
     fs.writeFileSync(tmpFile, fullHtml, 'utf-8')
 
@@ -244,71 +312,19 @@ ipcMain.handle('export-pdf', async (event, { title, html }) => {
       show: false,
       width: 900,
       height: 1200,
-      webPreferences: {
-        contextIsolation: true,
-        offscreen: false,
-        webSecurity: false,  // 允许 file:// 加载 CDN 资源
-      },
+      webPreferences: { contextIsolation: true, offscreen: false },
     })
 
     await pdfWin.loadFile(tmpFile)
 
-    // 在隐藏窗口中加载 KaTeX + highlight.js 并二次渲染
+    // 等待图片加载 + 渲染缓冲
     await pdfWin.webContents.executeJavaScript(`
-      new Promise(async (resolve) => {
-        // 动态加载脚本
-        function loadScript(url) {
-          return new Promise((res, rej) => {
-            const s = document.createElement('script');
-            s.src = url; s.onload = res; s.onerror = res;
-            document.head.appendChild(s);
-          });
-        }
-        function loadCss(url) {
-          return new Promise((res) => {
-            const l = document.createElement('link');
-            l.rel = 'stylesheet'; l.href = url; l.onload = res; l.onerror = res;
-            document.head.appendChild(l);
-          });
-        }
-
-        // 加载 KaTeX
-        await Promise.all([
-          loadCss('https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css'),
-          loadScript('https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js'),
-        ]);
-        await loadScript('https://cdn.jsdelivr.net/npm/katex@0.16/dist/contrib/auto-render.min.js');
-
-        // 渲染公式（识别 $...$ 和 $$...$$ 分隔符）
-        if (typeof renderMathInElement === 'function') {
-          try {
-            renderMathInElement(document.body, {
-              delimiters: [
-                {left: '$$', right: '$$', display: true},
-                {left: '$', right: '$', display: false},
-                {left: '\\\\(', right: '\\\\)', display: false},
-                {left: '\\\\[', right: '\\\\]', display: true},
-              ],
-              throwOnError: false,
-            });
-          } catch(e) { console.log('KaTeX error:', e); }
-        }
-
-        // 加载并运行 highlight.js 代码高亮
-        await loadScript('https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/highlight.min.js');
-        if (typeof hljs !== 'undefined') {
-          document.querySelectorAll('pre code[class]').forEach((block) => {
-            try { hljs.highlightElement(block); } catch(e) {}
-          });
-        }
-
-        // 等待图片加载 + 渲染缓冲
+      new Promise((resolve) => {
         const imgs = document.querySelectorAll('img');
-        await Promise.all(Array.from(imgs).map(img =>
+        Promise.all(Array.from(imgs).map(img =>
           img.complete ? Promise.resolve() :
           new Promise(r => { img.onload = r; img.onerror = r; })
-        ));
-        setTimeout(resolve, 800);
+        )).then(() => setTimeout(resolve, 500));
       })
     `)
 

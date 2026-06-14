@@ -44,6 +44,7 @@ function initVditor() {
     typewriterMode: true,
     mode: 'ir',
     theme,
+    cdn: 'https://unpkg.com/vditor@3.11.2',
     cache: { enable: false },
     placeholder: '开始书写 Markdown...',
     preview: {
