@@ -81,12 +81,14 @@ function initVditor() {
             try {
               const base64Data = await fileToBase64(file)
               
-              // 使用原始文件名，避免添加时间戳
-              const originalName = file.name || `image_${Date.now()}`
+              // 添加时间戳前缀，避免文件名冲突
+              const timestamp = Date.now()
+              const originalName = file.name || `image_${timestamp}`
+              const fileName = `${timestamp}_${originalName}`
               
               const result = await window.electronAPI.saveImage({
                 base64Data,
-                fileName: originalName // 直接使用原始文件名
+                fileName
               })
               
               if (result && result.path) {
@@ -112,7 +114,7 @@ function initVditor() {
       'outline', // 保留大纲按钮
       // 移除 fullscreen，使用顶部工具栏的 F11 全屏功能
     ],
-    // 图片上传配置（类似 Typora）
+// 图片上传配置（类似 Typora） - 处理粘贴、拖拽、工具栏上传
     upload: {
       accept: 'image/*',
       multiple: false,
@@ -146,7 +148,7 @@ function initVditor() {
           // 将文件转换为 base64
           const base64Data = await fileToBase64(file)
           
-          // 生成文件名（使用时间戳 + 原始文件名）
+          // 生成文件名（使用时间戳 + 原始文件名，避免冲突）
           const timestamp = Date.now()
           const originalName = file.name || `image_${timestamp}`
           const fileName = `${timestamp}_${originalName}`

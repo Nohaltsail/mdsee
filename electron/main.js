@@ -18,10 +18,11 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     title: 'mdsee',
-    webPreferences: {
+webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      webSecurity: false,
     },
     frame: true,
     autoHideMenuBar: true,
@@ -211,7 +212,7 @@ ipcMain.handle('save-image', async (event, { base64Data, fileName }) => {
     if (global.currentDocPath) {
       saveDir = path.dirname(global.currentDocPath)
     } else {
-      saveDir = path.join(os.homedir(), 'Documents', 'mdsee-images')
+      saveDir = path.join(os.homedir(), '.mdsee', 'images')
       if (!fs.existsSync(saveDir)) {
         fs.mkdirSync(saveDir, { recursive: true })
       }
