@@ -395,6 +395,62 @@ button {
   background-color: var(--white);
 }
 
+/* === 图片样式优化（防止卡顿）=== */
+.vditor-reset img,
+.vditor-ir__node img {
+  max-width: 100%;
+  height: auto; /* 保持宽高比，不拉伸 */
+  display: block;
+  margin: 16px auto;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s ease;
+  cursor: pointer; /* 提示可点击 */
+}
+
+.vditor-reset img:hover,
+.vditor-ir__node img:hover {
+  transform: scale(1.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* 限制预览面板中图片的最大高度，避免大图片导致卡顿 */
+.vditor-preview img {
+  max-height: 600px;
+  object-fit: contain; /* 保持宽高比 */
+}
+
+/* IR 模式中图片节点的样式 */
+.vditor-ir__node[data-type="image"] {
+  display: inline-block;
+  max-width: 100%;
+  margin: 8px 0;
+}
+
+/* 图片加载中的占位符 */
+.vditor-reset img[src^="data:"] {
+  opacity: 0.6;
+}
+
+/* 暗色主题下的图片样式 */
+html[data-theme="dark"] .vditor-reset img,
+html[data-theme="dark"] .vditor-ir__node img {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  filter: brightness(0.95);
+}
+
+html[data-theme="dark"] .vditor-reset img:hover,
+html[data-theme="dark"] .vditor-ir__node img:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  filter: brightness(1);
+}
+
+/* 图片尺寸控制提示 */
+.vditor-reset img::after {
+  content: attr(alt) ' (' attr(width) '×' attr(height) ')';
+  display: none; /* 默认隐藏，需要时显示 */
+}
+
 /* === Toast / Notification === */
 .toast {
   position: fixed;

@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveFile: (data) => ipcRenderer.invoke('save-file', data),
   newFile: () => ipcRenderer.invoke('new-file'),
 
+  // 图片操作
+  saveImage: (data) => ipcRenderer.invoke('save-image', data),
+
   // 导出
   exportPdf: (data) => ipcRenderer.invoke('export-pdf', data),
 

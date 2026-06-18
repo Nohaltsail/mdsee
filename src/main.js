@@ -56,16 +56,162 @@ function initVditor() {
         mermaid: { enable: true },
       },
     },
-    outline: { enable: true, position: 'right' },
+    outline: { enable: true, position: 'right' }, // 启用大纲功能
     toolbar: [
       'headings', 'bold', 'italic', 'strike', '|',
       'list', 'ordered-list', 'check', '|',
       'quote', 'code', 'inline-code', '|',
       'link', 'table', '|',
+      {
+        name: 'image',
+        tipPosition: 's',
+        tip: '插入图片',
+        icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
+        click: () => {
+          // 触发文件选择
+          const input = document.createElement('input')
+          input.type = 'file'
+          input.accept = 'image/*'
+          input.onchange = async (e) => {
+            const file = e.target.files[0]
+            if (!file) return
+            
+            showToast('正在处理图片...')
+            
+            try {
+              const base64Data = await fileToBase64(file)
+              
+              // 使用原始文件名，避免添加时间戳
+              const originalName = file.name || `image_${Date.now()}`
+              
+              const result = await window.electronAPI.saveImage({
+                base64Data,
+                fileName: originalName // 直接使用原始文件名
+              })
+              
+              if (result && result.path) {
+                showToast('图片已保存', 'success')
+                // 提取不带扩展名的文件名作为 alt 文本
+                const altText = originalName.replace(/\.[^.]+$/, '')
+                const imageMarkdown = `![${altText}](${result.path})`
+                console.log('[图片插入] Markdown:', imageMarkdown)
+                vditor.insertValue(imageMarkdown)
+              } else {
+                showToast('图片保存失败', 'error')
+              }
+            } catch (err) {
+              console.error('图片上传错误:', err)
+              showToast('图片上传失败', 'error')
+            }
+          }
+          input.click()
+        },
+      },
       'undo', 'redo', '|',
       'edit-mode', 'both', 'preview', '|',
-      'outline', 'fullscreen',
+      'outline', // 保留大纲按钮
+      // 移除 fullscreen，使用顶部工具栏的 F11 全屏功能
     ],
+    // 图片上传配置（类似 Typora）
+    upload: {
+      accept: 'image/*',
+      multiple: false,
+      fieldName: 'file',
+      max: 10 * 1024 * 1024, // 10MB
+      url: '', // 不使用远程上传，使用本地 handler
+      // 自定义上传处理器 - 返回标准响应格式
+      handler: async (files) => {
+        if (!window.electronAPI) {
+          showToast('浏览器模式不支持自动保存图片', 'error')
+          return JSON.stringify({
+            code: 1,
+            msg: '浏览器模式不支持自动保存图片'
+          })
+        }
+
+        const file = files[0]
+        if (!file) {
+          return JSON.stringify({ code: 1, msg: '没有选择文件' })
+        }
+
+        // 检查文件大小
+        if (file.size > 10 * 1024 * 1024) {
+          showToast('图片大小不能超过 10MB', 'error')
+          return JSON.stringify({ code: 1, msg: '图片大小不能超过 10MB' })
+        }
+
+        showToast('正在处理图片...')
+
+        try {
+          // 将文件转换为 base64
+          const base64Data = await fileToBase64(file)
+          
+          // 生成文件名（使用时间戳 + 原始文件名）
+          const timestamp = Date.now()
+          const originalName = file.name || `image_${timestamp}`
+          const fileName = `${timestamp}_${originalName}`
+          
+          // 调用 Electron API 保存图片
+          const result = await window.electronAPI.saveImage({
+            base64Data,
+            fileName
+          })
+          
+          if (result && result.path) {
+            // 返回标准格式：code=0 表示成功，data.succMap 包含文件名和URL映射
+            showToast('图片已保存', 'success')
+            const response = {
+              code: 0,
+              msg: '',
+              data: {
+                errFiles: [],
+                succMap: {
+                  [fileName]: result.path
+                }
+              }
+            }
+            console.log('[图片上传] 返回响应:', response)
+            return JSON.stringify(response)
+          } else {
+            showToast('图片保存失败', 'error')
+            return JSON.stringify({ code: 1, msg: '图片保存失败' })
+          }
+        } catch (err) {
+          console.error('图片上传错误:', err)
+          showToast('图片上传失败', 'error')
+          return JSON.stringify({ code: 1, msg: '图片上传失败: ' + err.message })
+        }
+      },
+      // 格式化响应，将 JSON 转换为 Markdown
+      format: (files, responseText) => {
+        console.log('[图片上传] format 收到响应:', responseText)
+        try {
+          const res = JSON.parse(responseText)
+          if (res.code === 0 && res.data && res.data.succMap) {
+            const succMap = res.data.succMap
+            // 转换为 Markdown 图片语法
+            const markdownImages = Object.entries(succMap).map(([filename, url]) => {
+              const altText = filename.replace(/^\d+_/, '').replace(/\.[^.]+$/, '')
+              return `![${altText}](${url})`
+            }).join('\n')
+            console.log('[图片上传] format 返回 Markdown:', markdownImages)
+            return markdownImages
+          }
+          return res.msg || '上传失败'
+        } catch (e) {
+          console.error('[图片上传] 解析响应失败:', e)
+          return responseText
+        }
+      },
+    },
+    // 剪贴板粘贴图片处理
+    paste: {
+      handler: async (md, textMode) => {
+        // 如果是文本模式，不处理
+        if (textMode) return md
+        return md // 让 Vditor 默认处理
+      },
+    },
     input: (value) => { debouncedSave(value) },
     after: () => {
       if (activeDoc) {
@@ -77,6 +223,124 @@ function initVditor() {
     },
   }
   vditor = new Vditor('vditor', options)
+  
+  // 等待 Vditor 完全初始化后添加剪贴板监听和大纲控制
+  setTimeout(() => {
+    // === 剪贴板图片粘贴支持 ===
+    const editorElement = document.querySelector('.vditor-ir') || document.querySelector('#vditor')
+    console.log('[剪贴板] 查找编辑器元素:', editorElement)
+    
+    if (editorElement && window.electronAPI) {
+      console.log('[剪贴板] 添加 paste 事件监听器')
+      editorElement.addEventListener('paste', async (e) => {
+        console.log('[剪贴板] paste 事件触发')
+        const items = e.clipboardData?.items
+        console.log('[剪贴板] clipboard items:', items)
+        if (!items) return
+        
+        for (const item of items) {
+          console.log('[剪贴板] 检查 item type:', item.type)
+          if (item.type.startsWith('image/')) {
+            e.preventDefault()
+            e.stopPropagation()
+            
+            const file = item.getAsFile()
+            console.log('[剪贴板] 获取到文件:', file)
+            if (!file) continue
+            
+            showToast('正在处理剪贴板图片...')
+            
+            try {
+              // 转换为 base64
+              const base64Data = await fileToBase64(file)
+              
+              // 生成文件名
+              const timestamp = Date.now()
+              const fileName = `${timestamp}_clipboard.png`
+              
+              // 调用 Electron API 保存
+              const result = await window.electronAPI.saveImage({
+                base64Data,
+                fileName
+              })
+              
+              console.log('[剪贴板] 保存结果:', result)
+              if (result && result.path) {
+                showToast('剪贴板图片已保存', 'success')
+                // 在光标位置插入图片链接
+                const imageMarkdown = `![clipboard](${result.path})`
+                console.log('[剪贴板] 插入 Markdown:', imageMarkdown)
+                vditor.insertValue(imageMarkdown)
+              } else {
+                showToast('剪贴板图片保存失败', 'error')
+              }
+            } catch (err) {
+              console.error('[剪贴板] 处理错误:', err)
+              showToast('剪贴板图片处理失败', 'error')
+            }
+            
+            break // 只处理第一张图片
+          }
+        }
+      })
+      console.log('[剪贴板] 监听器添加成功')
+    } else {
+      console.warn('[剪贴板] 未找到编辑器元素或 electronAPI')
+    }
+    
+    // === 大纲面板控制 ===
+    // 监听大纲按钮点击，添加关闭功能
+    const outlineBtn = document.querySelector('.vditor-toolbar__item[data-type="outline"]')
+    if (outlineBtn) {
+      outlineBtn.addEventListener('click', () => {
+        // 延迟执行，等待 Vditor 的大纲面板渲染
+        setTimeout(() => {
+          const outlinePanel = document.querySelector('.vditor-outline')
+          if (outlinePanel) {
+            // 如果大纲面板已显示，添加关闭按钮
+            let closeBtn = outlinePanel.querySelector('.vditor-outline-close-btn')
+            if (!closeBtn) {
+              closeBtn = document.createElement('button')
+              closeBtn.className = 'vditor-outline-close-btn'
+              closeBtn.innerHTML = '×'
+              closeBtn.style.cssText = `
+                position: absolute;
+                top: 8px;
+                right: 8px;
+                width: 24px;
+                height: 24px;
+                border: none;
+                background: rgba(0,0,0,0.1);
+                border-radius: 50%;
+                cursor: pointer;
+                font-size: 18px;
+                line-height: 1;
+                color: #666;
+                z-index: 10;
+              `
+              closeBtn.title = '关闭大纲'
+              closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation()
+                outlinePanel.style.display = 'none'
+              })
+              outlinePanel.style.position = 'relative'
+              outlinePanel.appendChild(closeBtn)
+            }
+          }
+        }, 100)
+      })
+    }
+  }, 500) // 延迟 500ms 确保 Vditor 完全初始化
+}
+
+// 辅助函数：文件转 base64
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
 }
 
 // ============ 防抖保存 ============

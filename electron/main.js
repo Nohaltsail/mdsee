@@ -109,6 +109,8 @@ ipcMain.handle('open-file', async () => {
   const filePath = result.filePaths[0]
   const content = fs.readFileSync(filePath, 'utf-8')
   const name = path.basename(filePath).replace(/\.(md|markdown|txt)$/i, '')
+  // 更新当前文档路径
+  global.currentDocPath = filePath
   return { name, content, path: filePath }
 })
 
@@ -157,6 +159,8 @@ ipcMain.handle('save-file', async (event, { name, content, path: filePath }) => 
   if (filePath) {
     try {
       fs.writeFileSync(filePath, content || '', 'utf-8')
+      // 更新当前文档路径，用于图片相对路径计算
+      global.currentDocPath = filePath
       return { path: filePath }
     } catch (err) {
       console.error('save file error:', err)
@@ -174,12 +178,70 @@ ipcMain.handle('save-file', async (event, { name, content, path: filePath }) => 
   })
   if (result.canceled || !result.filePath) return false
   fs.writeFileSync(result.filePath, content || '', 'utf-8')
+  // 更新当前文档路径
+  global.currentDocPath = result.filePath
   return { path: result.filePath }
 })
 
 // 新建文件
 ipcMain.handle('new-file', async () => {
   return { name: '未命名文档' }
+})
+
+// 保存图片（粘贴图片时调用）
+ipcMain.handle('save-image', async (event, { base64Data, fileName }) => {
+  try {
+    // 从 base64 提取图片格式
+    const matches = base64Data.match(/^data:image\/(\w+);base64,/)
+    if (!matches) return null
+    
+    const format = matches[1]
+    const ext = format === 'jpeg' ? 'jpg' : format
+    const timestamp = Date.now()
+    const safeFileName = fileName || `image_${timestamp}.${ext}`
+    
+    // 确保文件名有正确的扩展名
+    let finalFileName = safeFileName
+    if (!finalFileName.endsWith(`.${ext}`)) {
+      finalFileName = `${finalFileName.replace(/\.[^.]+$/, '')}.${ext}`
+    }
+    
+    // 获取当前文档所在目录，如果没有则使用用户文档目录
+    let saveDir
+    if (global.currentDocPath) {
+      saveDir = path.dirname(global.currentDocPath)
+    } else {
+      saveDir = path.join(os.homedir(), 'Documents', 'mdsee-images')
+      if (!fs.existsSync(saveDir)) {
+        fs.mkdirSync(saveDir, { recursive: true })
+      }
+    }
+    
+    const imagePath = path.join(saveDir, finalFileName)
+    
+    // 去除 base64 前缀
+    const base64Image = base64Data.replace(/^data:image\/\w+;base64,/, '')
+    const imageBuffer = Buffer.from(base64Image, 'base64')
+    
+    fs.writeFileSync(imagePath, imageBuffer)
+    
+    // 返回相对路径（如果可能）或 file:// 协议的绝对路径
+    let relativePath
+    if (global.currentDocPath) {
+      relativePath = path.relative(path.dirname(global.currentDocPath), imagePath)
+      // Windows 下统一使用正斜杠
+      relativePath = relativePath.replace(/\\/g, '/')
+    } else {
+      // 如果文档未保存，使用 file:// 协议的绝对路径
+      relativePath = 'file:///' + imagePath.replace(/\\/g, '/')
+    }
+    
+    console.log('[save-image] 返回路径:', relativePath)
+    return { path: relativePath, absolutePath: imagePath }
+  } catch (err) {
+    console.error('save image error:', err)
+    return null
+  }
 })
 
 // 导出 PDF — 使用 Vditor 本地捆绑的 KaTeX/hljs，零 CDN 依赖
