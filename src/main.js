@@ -122,21 +122,15 @@ function initVditor() {
       max: 10 * 1024 * 1024, // 10MB
       url: '', // 不使用远程上传，使用本地 handler
       // 自定义上传处理器 - 返回标准响应格式
-      handler: async (files) => {
+handler: async (files) => {
         if (!window.electronAPI) {
           showToast('浏览器模式不支持自动保存图片', 'error')
-          return JSON.stringify({
-            code: 1,
-            msg: '浏览器模式不支持自动保存图片'
-          })
+          return JSON.stringify({ code: 1, msg: '浏览器模式不支持自动保存图片' })
         }
 
         const file = files[0]
-        if (!file) {
-          return JSON.stringify({ code: 1, msg: '没有选择文件' })
-        }
+        if (!file) return JSON.stringify({ code: 1, msg: '没有选择文件' })
 
-        // 检查文件大小
         if (file.size > 10 * 1024 * 1024) {
           showToast('图片大小不能超过 10MB', 'error')
           return JSON.stringify({ code: 1, msg: '图片大小不能超过 10MB' })
@@ -145,35 +139,25 @@ function initVditor() {
         showToast('正在处理图片...')
 
         try {
-          // 将文件转换为 base64
           const base64Data = await fileToBase64(file)
-          
-          // 生成文件名（使用时间戳 + 原始文件名，避免冲突）
           const timestamp = Date.now()
           const originalName = file.name || `image_${timestamp}`
           const fileName = `${timestamp}_${originalName}`
           
-          // 调用 Electron API 保存图片
-          const result = await window.electronAPI.saveImage({
-            base64Data,
-            fileName
-          })
+          const result = await window.electronAPI.saveImage({ base64Data, fileName })
           
           if (result && result.path) {
-            // 返回标准格式：code=0 表示成功，data.succMap 包含文件名和URL映射
             showToast('图片已保存', 'success')
-            const response = {
-              code: 0,
-              msg: '',
-              data: {
-                errFiles: [],
-                succMap: {
-                  [fileName]: result.path
-                }
-              }
-            }
-            console.log('[图片上传] 返回响应:', response)
-            return JSON.stringify(response)
+            const altText = originalName.replace(/\.[^.]+$/, '')
+            const imageMarkdown = `![${altText}](${result.path})`
+            console.log('[图片上传] 准备延迟插入:', imageMarkdown)
+            setTimeout(() => {
+              console.log('[图片上传] 执行插入')
+              vditor.focus()
+              vditor.insertValue(imageMarkdown)
+              console.log('[图片上传] 插入完成')
+            }, 100)
+            return null
           } else {
             showToast('图片保存失败', 'error')
             return JSON.stringify({ code: 1, msg: '图片保存失败' })
@@ -234,55 +218,62 @@ function initVditor() {
     
     if (editorElement && window.electronAPI) {
       console.log('[剪贴板] 添加 paste 事件监听器')
-      editorElement.addEventListener('paste', async (e) => {
+editorElement.addEventListener('paste', async (e) => {
         console.log('[剪贴板] paste 事件触发')
         const items = e.clipboardData?.items
         console.log('[剪贴板] clipboard items:', items)
         if (!items) return
         
+        let hasImage = false
         for (const item of items) {
           console.log('[剪贴板] 检查 item type:', item.type)
           if (item.type.startsWith('image/')) {
+            hasImage = true
+            const file = item.getAsFile()
+            console.log('[剪贴板] 获取到图片文件:', file)
+            if (!file) continue
+            
+            // 阻止 Vditor 默认粘贴行为（防止粘贴图片文件名）
             e.preventDefault()
             e.stopPropagation()
             
-            const file = item.getAsFile()
-            console.log('[剪贴板] 获取到文件:', file)
-            if (!file) continue
-            
             showToast('正在处理剪贴板图片...')
             
-            try {
-              // 转换为 base64
-              const base64Data = await fileToBase64(file)
-              
-              // 生成文件名
-              const timestamp = Date.now()
-              const fileName = `${timestamp}_clipboard.png`
-              
-              // 调用 Electron API 保存
-              const result = await window.electronAPI.saveImage({
-                base64Data,
-                fileName
-              })
-              
-              console.log('[剪贴板] 保存结果:', result)
-              if (result && result.path) {
-                showToast('剪贴板图片已保存', 'success')
-                // 在光标位置插入图片链接
-                const imageMarkdown = `![clipboard](${result.path})`
-                console.log('[剪贴板] 插入 Markdown:', imageMarkdown)
-                vditor.insertValue(imageMarkdown)
-              } else {
-                showToast('剪贴板图片保存失败', 'error')
+            setTimeout(async () => {
+              try {
+                const base64Data = await fileToBase64(file)
+                const timestamp = Date.now()
+                const fileName = `${timestamp}_clipboard.png`
+                
+                const result = await window.electronAPI.saveImage({
+                  base64Data,
+                  fileName
+                })
+                
+                console.log('[剪贴板] 保存结果:', result)
+                if (result && result.path) {
+                  showToast('剪贴板图片已保存', 'success')
+                  const imageMarkdown = `![image](${result.path})`
+                  console.log('[剪贴板] 准备插入:', imageMarkdown)
+                  vditor.focus()
+                  vditor.insertValue(imageMarkdown)
+                  console.log('[剪贴板] 插入完成')
+                } else {
+                  showToast('剪贴板图片保存失败', 'error')
+                }
+              } catch (err) {
+                console.error('[剪贴板] 处理错误:', err)
+                showToast('剪贴板图片处理失败', 'error')
               }
-            } catch (err) {
-              console.error('[剪贴板] 处理错误:', err)
-              showToast('剪贴板图片处理失败', 'error')
-            }
+            }, 50)
             
-            break // 只处理第一张图片
+            break
           }
+        }
+        
+        if (!hasImage) {
+          console.log('[剪贴板] 剪切板中没有图片')
+          showToast('剪切板中没有图片内容，请先复制图片', 'error')
         }
       })
       console.log('[剪贴板] 监听器添加成功')
