@@ -94,15 +94,13 @@ function initVditor() {
               if (result && result.path) {
                 showToast('图片已保存', 'success')
                 // 提取不带扩展名的文件名作为 alt 文本
-                const altText = originalName.replace(/\.[^.]+$/, '')
+const altText = originalName.replace(/\.[^.]+$/, '')
                 const imageMarkdown = `![${altText}](${result.path})`
-                console.log('[图片插入] Markdown:', imageMarkdown)
                 vditor.insertValue(imageMarkdown)
               } else {
                 showToast('图片保存失败', 'error')
               }
-            } catch (err) {
-              console.error('图片上传错误:', err)
+} catch (err) {
               showToast('图片上传失败', 'error')
             }
           }
@@ -150,12 +148,9 @@ handler: async (files) => {
             showToast('图片已保存', 'success')
             const altText = originalName.replace(/\.[^.]+$/, '')
             const imageMarkdown = `![${altText}](${result.path})`
-            console.log('[图片上传] 准备延迟插入:', imageMarkdown)
             setTimeout(() => {
-              console.log('[图片上传] 执行插入')
               vditor.focus()
               vditor.insertValue(imageMarkdown)
-              console.log('[图片上传] 插入完成')
             }, 100)
             return null
           } else {
@@ -163,29 +158,24 @@ handler: async (files) => {
             return JSON.stringify({ code: 1, msg: '图片保存失败' })
           }
         } catch (err) {
-          console.error('图片上传错误:', err)
           showToast('图片上传失败', 'error')
           return JSON.stringify({ code: 1, msg: '图片上传失败: ' + err.message })
         }
       },
       // 格式化响应，将 JSON 转换为 Markdown
-      format: (files, responseText) => {
-        console.log('[图片上传] format 收到响应:', responseText)
+format: (files, responseText) => {
         try {
           const res = JSON.parse(responseText)
           if (res.code === 0 && res.data && res.data.succMap) {
             const succMap = res.data.succMap
-            // 转换为 Markdown 图片语法
             const markdownImages = Object.entries(succMap).map(([filename, url]) => {
               const altText = filename.replace(/^\d+_/, '').replace(/\.[^.]+$/, '')
               return `![${altText}](${url})`
             }).join('\n')
-            console.log('[图片上传] format 返回 Markdown:', markdownImages)
             return markdownImages
           }
           return res.msg || '上传失败'
         } catch (e) {
-          console.error('[图片上传] 解析响应失败:', e)
           return responseText
         }
       },
@@ -211,26 +201,19 @@ handler: async (files) => {
   vditor = new Vditor('vditor', options)
   
   // 等待 Vditor 完全初始化后添加剪贴板监听和大纲控制
-  setTimeout(() => {
-    // === 剪贴板图片粘贴支持 ===
+setTimeout(() => {
     const editorElement = document.querySelector('.vditor-ir') || document.querySelector('#vditor')
-    console.log('[剪贴板] 查找编辑器元素:', editorElement)
     
     if (editorElement && window.electronAPI) {
-      console.log('[剪贴板] 添加 paste 事件监听器')
-editorElement.addEventListener('paste', async (e) => {
-        console.log('[剪贴板] paste 事件触发')
+      editorElement.addEventListener('paste', async (e) => {
         const items = e.clipboardData?.items
-        console.log('[剪贴板] clipboard items:', items)
         if (!items) return
         
         let hasImage = false
         for (const item of items) {
-          console.log('[剪贴板] 检查 item type:', item.type)
           if (item.type.startsWith('image/')) {
             hasImage = true
             const file = item.getAsFile()
-            console.log('[剪贴板] 获取到图片文件:', file)
             if (!file) continue
             
             // 阻止 Vditor 默认粘贴行为（防止粘贴图片文件名）
@@ -250,19 +233,15 @@ editorElement.addEventListener('paste', async (e) => {
                   fileName
                 })
                 
-                console.log('[剪贴板] 保存结果:', result)
                 if (result && result.path) {
                   showToast('剪贴板图片已保存', 'success')
                   const imageMarkdown = `![image](${result.path})`
-                  console.log('[剪贴板] 准备插入:', imageMarkdown)
                   vditor.focus()
                   vditor.insertValue(imageMarkdown)
-                  console.log('[剪贴板] 插入完成')
                 } else {
                   showToast('剪贴板图片保存失败', 'error')
                 }
               } catch (err) {
-                console.error('[剪贴板] 处理错误:', err)
                 showToast('剪贴板图片处理失败', 'error')
               }
             }, 50)
@@ -272,13 +251,9 @@ editorElement.addEventListener('paste', async (e) => {
         }
         
         if (!hasImage) {
-          console.log('[剪贴板] 剪切板中没有图片')
           showToast('剪切板中没有图片内容，请先复制图片', 'error')
         }
       })
-      console.log('[剪贴板] 监听器添加成功')
-    } else {
-      console.warn('[剪贴板] 未找到编辑器元素或 electronAPI')
     }
     
     // === 大纲面板控制 ===

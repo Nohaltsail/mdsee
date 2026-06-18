@@ -237,7 +237,6 @@ ipcMain.handle('save-image', async (event, { base64Data, fileName }) => {
       relativePath = 'file:///' + imagePath.replace(/\\/g, '/')
     }
     
-    console.log('[save-image] 返回路径:', relativePath)
     return { path: relativePath, absolutePath: imagePath }
   } catch (err) {
     console.error('save image error:', err)
