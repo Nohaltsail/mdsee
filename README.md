@@ -1,8 +1,10 @@
 # mdsee
 
 一款桌面版 Markdown 编辑器，使用 Electron + Vite 构建。支持实时预览、图表、LaTeX 公式、代码高亮、暗色主题和 PDF 导出。
-<img width="1872" height="1123" alt="image" src="https://github.com/user-attachments/assets/96cd95c1-b452-471a-89d3-6dd567a85bb0" />
-<img width="1888" height="1122" alt="image" src="https://github.com/user-attachments/assets/f0e95da0-8b55-4468-93b9-f8701c0f9931" />
+<img width="1893" height="1137" alt="image" src="https://github.com/user-attachments/assets/bbfb8f57-dc67-4a2d-8556-8bcf9843256d" />
+
+<img width="1886" height="1111" alt="image" src="https://github.com/user-attachments/assets/2fa1df1e-4105-404d-b894-5ef01f64600f" />
+
 
 
 ## 功能特性
