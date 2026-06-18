@@ -4,9 +4,11 @@
 
 ### 界面展示
 - 明亮风
-<img width="1893" height="1137" alt="image" src="https://github.com/user-attachments/assets/bbfb8f57-dc67-4a2d-8556-8bcf9843256d" />
+<img width="1900" height="1130" alt="image" src="https://github.com/user-attachments/assets/1eb84b6e-92f4-4ed7-ac63-0e038f48d580" />
+
 - 暗色风
-<img width="1886" height="1111" alt="image" src="https://github.com/user-attachments/assets/2fa1df1e-4105-404d-b894-5ef01f64600f" />
+<img width="1900" height="1130" alt="image" src="https://github.com/user-attachments/assets/f0db72bf-5988-4540-9a34-a44e182d04e7" />
+
 
 
 
